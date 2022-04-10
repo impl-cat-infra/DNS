@@ -73,7 +73,6 @@ pub struct Req<'a> {
 }
 
 fn parse_header_status(input: &[u8]) -> IResult<&[u8], (bool, OpCode, bool, bool)> {
-    log::info!("Parsing status");
     let parser = tuple::<_, _, Error<(&[u8], usize)>, _>((
         bits::complete::take(1usize), // QR
         bits::complete::take(4usize), // OPCODE
@@ -91,7 +90,6 @@ fn parse_header_status(input: &[u8]) -> IResult<&[u8], (bool, OpCode, bool, bool
 }
 
 fn parse_header(input: &[u8]) -> IResult<&[u8], ReqHeader> {
-    log::info!("Parsing header");
     let parser = tuple((
         be_u16,
         parse_header_status,
