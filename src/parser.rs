@@ -1,4 +1,14 @@
-use nom::{sequence::tuple, IResult, error::Error, multi::{count, many_till}, number::complete::{be_u16, be_u8, be_u32}, bytes::complete::{tag, take}, combinator::{map, map_res, verify, flat_map, eof}, bits, branch::alt};
+use nom::{
+    bits,
+    branch::alt,
+    bytes::complete::{tag, take},
+    combinator::{eof, flat_map, map, map_res, verify},
+    error::Error,
+    multi::{count, many_till},
+    number::complete::{be_u16, be_u32, be_u8},
+    sequence::tuple,
+    IResult,
+};
 use nom_derive::Nom;
 use num_enum::TryFromPrimitive;
 use std::borrow::Cow;
@@ -93,13 +103,13 @@ pub struct Req<'a> {
 
 pub fn parse_header_status(input: &[u8]) -> IResult<&[u8], ReqHeaderStatus> {
     let parser = tuple::<_, _, Error<(&[u8], usize)>, _>((
-        bits::complete::take(1usize), // QR
-        bits::complete::take(4usize), // OPCODE
+        bits::complete::take(1usize),   // QR
+        bits::complete::take(4usize),   // OPCODE
         bits::complete::tag(0, 2usize), // AA + TC
-        bits::complete::take(1usize), // RD
+        bits::complete::take(1usize),   // RD
         bits::complete::tag(0, 2usize), // RA + Z(1)
-        bits::complete::take(1usize), // AD
-        bits::complete::take(1usize), // CD
+        bits::complete::take(1usize),   // AD
+        bits::complete::take(1usize),   // CD
         bits::complete::tag(0, 4usize), // RCODE
     ));
 
@@ -124,52 +134,58 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], ReqHeader> {
     ));
 
     map(parser, |(id, status, qdcnt, _, arcnt)| ReqHeader {
-        id, status, qdcnt, arcnt
+        id,
+        status,
+        qdcnt,
+        arcnt,
     })(input)
 }
 
 fn parse_label<'a>(input: &'a [u8]) -> IResult<&'a [u8], Cow<'a, str>> {
-    map(
-        flat_map(be_u8, |cnt| take(cnt)),
-        |slice| String::from_utf8_lossy(slice)
-    )(input)
+    map(flat_map(be_u8, |cnt| take(cnt)), |slice| {
+        String::from_utf8_lossy(slice)
+    })(input)
 }
 
 fn parse_ptr<'a>(input: &'a [u8]) -> IResult<&'a [u8], Option<u16>> {
     alt((
         map(tag(b"\0"), |_| None),
-        map(verify(be_u16, |parsed| (parsed >> 14) == 3), Option::Some)
+        map(verify(be_u16, |parsed| (parsed >> 14) == 3), Option::Some),
     ))(input)
 }
 
 fn parse_name<'a>(input: &'a [u8]) -> IResult<&'a [u8], Name<'a>> {
-    map(many_till(
-        parse_label, parse_ptr
-    ), |(labels, ptr)| Name { labels, ptr })(input)
+    map(many_till(parse_label, parse_ptr), |(labels, ptr)| Name {
+        labels,
+        ptr,
+    })(input)
 }
 
 fn parse_question<'a>(input: &'a [u8]) -> IResult<&'a [u8], Question<'a>> {
     use nom_derive::Parse;
-    map(tuple((
-        parse_name,
-        Type::parse,
-        be_u16,
-    )), |(name, ty, _cls)| {
-        Question { name, ty }
-    })(input)
+    map(
+        tuple((parse_name, Type::parse, be_u16)),
+        |(name, ty, _cls)| Question { name, ty },
+    )(input)
 }
 
 fn parse_rr<'a>(input: &'a [u8]) -> IResult<&'a [u8], RR<'a>> {
     use nom_derive::Parse;
-    map(tuple((
-        parse_name,
-        Type::parse,
-        be_u16, // Class
-        be_u32, // TTL
-        flat_map(be_u16, take), // RDLENGRTH + RDATA
-    )), |(name, ty, _cls, ttl, rdata)| {
-        RR { name, ty, ttl, rdata }
-    })(input)
+    map(
+        tuple((
+            parse_name,
+            Type::parse,
+            be_u16,                 // Class
+            be_u32,                 // TTL
+            flat_map(be_u16, take), // RDLENGRTH + RDATA
+        )),
+        |(name, ty, _cls, ttl, rdata)| RR {
+            name,
+            ty,
+            ttl,
+            rdata,
+        },
+    )(input)
 }
 
 fn parse_request<'a>(input: &'a [u8]) -> IResult<&'a [u8], Req<'a>> {
@@ -177,11 +193,14 @@ fn parse_request<'a>(input: &'a [u8]) -> IResult<&'a [u8], Req<'a>> {
     let (input, questions) = count(parse_question, hdr.qdcnt as usize)(input)?;
     let (input, additionals) = count(parse_rr, hdr.arcnt as usize)(input)?;
 
-    Ok((input, Req {
-        header: hdr,
-        questions,
-        additionals,
-    }))
+    Ok((
+        input,
+        Req {
+            header: hdr,
+            questions,
+            additionals,
+        },
+    ))
 }
 
 pub fn parse<'a>(input: &'a [u8]) -> IResult<&'a [u8], Req<'a>> {

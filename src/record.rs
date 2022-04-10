@@ -13,7 +13,8 @@ impl Borrow<[String]> for Name {
 
 impl<'de> Deserialize<'de> for Name {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::Deserializer<'de>
+    where
+        D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
         Ok(Self(s.split(".").map(str::to_owned).collect()))
@@ -71,7 +72,15 @@ impl RecordInner {
     pub fn serialize(&self) -> std::io::Result<Vec<u8>> {
         let mut ret = Vec::new();
         match self {
-            RecordInner::SOA { serial, mname, rname, refresh, retry, expire, minimum } => {
+            RecordInner::SOA {
+                serial,
+                mname,
+                rname,
+                refresh,
+                retry,
+                expire,
+                minimum,
+            } => {
                 serialize_name(&mname.0, &mut ret)?;
                 serialize_name(&rname.0, &mut ret)?;
                 ret.write(&serial.to_be_bytes())?;
@@ -79,12 +88,22 @@ impl RecordInner {
                 ret.write(&retry.to_be_bytes())?;
                 ret.write(&expire.to_be_bytes())?;
                 ret.write(&minimum.to_be_bytes())?;
-            },
-            RecordInner::NS { ns } => { serialize_name(&ns.0, &mut ret)?; }
-            RecordInner::A { addr } => { ret.write(addr)?; }
-            RecordInner::AAAA { addr } => { ret.write(addr)?; }
-            RecordInner::CNAME { to } => { serialize_name(&to.0, &mut ret)?; }
-            RecordInner::TXT { content } => { ret.write(content.as_bytes())?; }
+            }
+            RecordInner::NS { ns } => {
+                serialize_name(&ns.0, &mut ret)?;
+            }
+            RecordInner::A { addr } => {
+                ret.write(addr)?;
+            }
+            RecordInner::AAAA { addr } => {
+                ret.write(addr)?;
+            }
+            RecordInner::CNAME { to } => {
+                serialize_name(&to.0, &mut ret)?;
+            }
+            RecordInner::TXT { content } => {
+                ret.write(content.as_bytes())?;
+            }
         }
 
         Ok(ret)
@@ -102,19 +121,15 @@ pub struct Record {
 impl Record {
     pub fn serialize<W: Write>(&self, w: &mut W) -> std::io::Result<()> {
         // TYPE
-        w.write_all(
-            &(self.inner.ty() as u16).to_be_bytes()
-        )?;
+        w.write_all(&(self.inner.ty() as u16).to_be_bytes())?;
 
         // CLASS
         w.write_all(
-            &[0, 1] // IN
+            &[0, 1], // IN
         )?;
 
         // TTL
-        w.write_all(
-            &self.ttl.to_be_bytes()
-        )?;
+        w.write_all(&self.ttl.to_be_bytes())?;
 
         let rdata = self.inner.serialize()?;
 
