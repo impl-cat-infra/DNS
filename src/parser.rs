@@ -3,7 +3,7 @@ use nom_derive::Nom;
 use num_enum::TryFromPrimitive;
 use std::borrow::Cow;
 
-#[derive(TryFromPrimitive, Debug)]
+#[derive(TryFromPrimitive, Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum OpCode {
     Query = 0,
@@ -11,7 +11,7 @@ pub enum OpCode {
     Status = 2,
 }
 
-#[derive(TryFromPrimitive, Nom, Debug)]
+#[derive(TryFromPrimitive, Nom, Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u16)]
 pub enum Type {
     A = 1,
@@ -29,23 +29,34 @@ pub enum Type {
     ANY = 255,
 }
 
+impl Type {
+    pub fn need_recursive(&self) -> bool {
+        match self {
+            // This may lead to inconsistency, but let's offload those footguns to our user anyway
+            Self::NS => true,
+            Self::SOA => true,
+
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct DomainName<'a> {
+pub struct Name<'a> {
     pub labels: Vec<Cow<'a, str>>,
     pub ptr: Option<u16>,
 }
 
-
 #[derive(Debug)]
 pub struct Question<'a> {
-    pub name: DomainName<'a>,
+    pub name: Name<'a>,
     pub ty: Type,
     // Right now, silently ignores QCLASS
 }
 
 #[derive(Debug)]
 pub struct RR<'a> {
-    pub name: DomainName<'a>,
+    pub name: Name<'a>,
     pub ty: Type,
     // Right now, silently ignores CLASS
     pub ttl: u32,
@@ -53,13 +64,21 @@ pub struct RR<'a> {
 }
 
 #[derive(Debug)]
-pub struct ReqHeader {
-    pub id: u16,
+pub struct ReqHeaderStatus {
     pub qr: bool,
     pub opcode: OpCode,
 
+    pub rd: bool,
+
     pub ad: bool,
     pub cd: bool,
+}
+
+#[derive(Debug)]
+pub struct ReqHeader {
+    pub id: u16,
+
+    pub status: ReqHeaderStatus,
 
     pub qdcnt: u16,
     pub arcnt: u16, // We are only looking for EDNS0
@@ -72,20 +91,26 @@ pub struct Req<'a> {
     pub additionals: Vec<RR<'a>>,
 }
 
-fn parse_header_status(input: &[u8]) -> IResult<&[u8], (bool, OpCode, bool, bool)> {
+pub fn parse_header_status(input: &[u8]) -> IResult<&[u8], ReqHeaderStatus> {
     let parser = tuple::<_, _, Error<(&[u8], usize)>, _>((
         bits::complete::take(1usize), // QR
         bits::complete::take(4usize), // OPCODE
         bits::complete::tag(0, 2usize), // AA + TC
-        bits::complete::take(1usize), // RD, ignored
+        bits::complete::take(1usize), // RD
         bits::complete::tag(0, 2usize), // RA + Z(1)
         bits::complete::take(1usize), // AD
         bits::complete::take(1usize), // CD
         bits::complete::tag(0, 4usize), // RCODE
     ));
 
-    map_res(bits::bits(parser), |(qr, opcode_raw, _, _, _, ad, cd, _): (u8, u8, _, u8, _, u8, u8, _)| -> Result<_, <OpCode as TryFrom<u8>>::Error> {
-        Ok((qr != 0, OpCode::try_from(opcode_raw)?, ad != 0, cd != 0))
+    map_res(bits::bits(parser), |(qr, opcode_raw, _, rd, _, ad, cd, _): (u8, u8, _, u8, _, u8, u8, _)| -> Result<_, <OpCode as TryFrom<u8>>::Error> {
+        Ok(ReqHeaderStatus {
+            qr: qr != 0,
+            opcode: OpCode::try_from(opcode_raw)?,
+            rd: rd != 0,
+            ad: ad != 0,
+            cd: cd != 0,
+        })
     })(input)
 }
 
@@ -98,8 +123,8 @@ fn parse_header(input: &[u8]) -> IResult<&[u8], ReqHeader> {
         be_u16,
     ));
 
-    map(parser, |(id, (qr, opcode, ad, cd), qdcnt, _, arcnt)| ReqHeader {
-        id, qr, opcode, qdcnt, ad, cd, arcnt
+    map(parser, |(id, status, qdcnt, _, arcnt)| ReqHeader {
+        id, status, qdcnt, arcnt
     })(input)
 }
 
@@ -117,10 +142,10 @@ fn parse_ptr<'a>(input: &'a [u8]) -> IResult<&'a [u8], Option<u16>> {
     ))(input)
 }
 
-fn parse_name<'a>(input: &'a [u8]) -> IResult<&'a [u8], DomainName<'a>> {
+fn parse_name<'a>(input: &'a [u8]) -> IResult<&'a [u8], Name<'a>> {
     map(many_till(
         parse_label, parse_ptr
-    ), |(labels, ptr)| DomainName { labels, ptr })(input)
+    ), |(labels, ptr)| Name { labels, ptr })(input)
 }
 
 fn parse_question<'a>(input: &'a [u8]) -> IResult<&'a [u8], Question<'a>> {
