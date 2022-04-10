@@ -1,3 +1,5 @@
+mod parser;
+
 use std::net::SocketAddr;
 
 use log::debug;
@@ -14,8 +16,19 @@ struct Args {
     host: String,
 }
 
-async fn handle(buf: Vec<u8>, remote: SocketAddr) -> () {
+async fn handle(buf: Vec<u8>, remote: SocketAddr) -> anyhow::Result<()> {
     debug!("Recieved from {}", remote);
+    debug!("{:?}", buf);
+    let parsed = match parser::parse(buf.as_slice()) {
+        Ok((_, parsed)) => parsed,
+        Err(e) => {
+            log::error!("Malformed request: {}", e);
+            return Ok(())
+        }
+    };
+
+    log::debug!("Request: {:?}", parsed);
+    Ok(())
 }
 
 #[paw::main]
