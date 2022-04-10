@@ -75,6 +75,7 @@ fn write_resp_header<W: Write>(
     writer: &mut W,
     id: u16,
     rcode: Rcode,
+    is_aa: bool,
     req_status: &ReqHeaderStatus,
 
     cnts: [u16; 4],
@@ -83,7 +84,7 @@ fn write_resp_header<W: Write>(
     writer.write_all(&[
         0x80 // QR(1 = R)
         | (req_status.opcode as u8) << 3
-        | 1 << 2 // AA // FIXME: If answer is NS, this is NOT an AA
+        | (if is_aa { 1 << 2 } else { 0 }) // AA
         | req_status.rd as u8,
 
         rcode as u8
@@ -114,7 +115,7 @@ async fn handle(buf: Vec<u8>, socket: Arc<UdpSocket>, remote: SocketAddr, storag
             } else {
                 return Ok(());
             };
-            write_resp_header(&mut output_buffer, id, Rcode::Format, &hdr_status, [0, 0, 0, 0])?;
+            write_resp_header(&mut output_buffer, id, Rcode::Format, true, &hdr_status, [0, 0, 0, 0])?;
             socket.send_to(&output_buffer, &remote).await?;
             return Ok(())
         }
@@ -125,7 +126,7 @@ async fn handle(buf: Vec<u8>, socket: Arc<UdpSocket>, remote: SocketAddr, storag
     if parsed.questions.len() != 1 {
         log::error!("Unimplemented: query with \\neq 1 question");
 
-        write_resp_header(&mut output_buffer, parsed.header.id, Rcode::NotImpl, &parsed.header.status, [0, 0, 0, 0])?;
+        write_resp_header(&mut output_buffer, parsed.header.id, Rcode::NotImpl, true, &parsed.header.status, [0, 0, 0, 0])?;
         socket.send_to(&output_buffer, &remote).await?;
         return Ok(())
     }
@@ -134,7 +135,7 @@ async fn handle(buf: Vec<u8>, socket: Arc<UdpSocket>, remote: SocketAddr, storag
     if q.name.ptr.is_some() {
         log::error!("Unimplemented: query with ptr in name");
 
-        write_resp_header(&mut output_buffer, parsed.header.id, Rcode::NotImpl, &parsed.header.status, [0, 0, 0, 0])?;
+        write_resp_header(&mut output_buffer, parsed.header.id, Rcode::NotImpl, true, &parsed.header.status, [0, 0, 0, 0])?;
         socket.send_to(&output_buffer, &remote).await?;
         return Ok(())
     }
@@ -147,7 +148,16 @@ async fn handle(buf: Vec<u8>, socket: Arc<UdpSocket>, remote: SocketAddr, storag
         (scope, answers) = storage.query(&segs, parser::Type::CNAME);
     }
 
-    // Check authoritative servers
+    // For all recursive requests, additionally check is a nearer NS is present
+    if answers.len() > 0 && q.ty.need_recursive() && q.ty != parser::Type::NS {
+        let (nsscope, nsanswers) = storage.query(&segs, parser::Type::NS);
+        if nsscope.len() > scope.len() {
+            scope = nsscope;
+            answers = nsanswers;
+        }
+    }
+ 
+    // Finally, nothing is found. Check authoritative servers
     if answers.len() == 0 && q.ty != parser::Type::NS {
         (scope, answers) = storage.query(&segs, parser::Type::NS);
     }
@@ -162,7 +172,7 @@ async fn handle(buf: Vec<u8>, socket: Arc<UdpSocket>, remote: SocketAddr, storag
 
     let is_ns = answers.len() > 0 && answers[0].inner.ty() == parser::Type::NS;
 
-    write_resp_header(&mut output_buffer, parsed.header.id, rcode, &parsed.header.status, [
+    write_resp_header(&mut output_buffer, parsed.header.id, rcode, !is_ns, &parsed.header.status, [
         0, // TODO: Copy questions
         if is_ns { 0 } else { answers.len() as u16 },
         if !is_ns { 0 } else { answers.len() as u16 },
